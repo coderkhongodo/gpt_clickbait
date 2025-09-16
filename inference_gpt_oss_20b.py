@@ -6,6 +6,7 @@ import torch
 from datasets import load_dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, AutoConfig
 from peft import PeftModel
+from tqdm import tqdm
 
 
 MODEL_ID = os.environ.get("MODEL_ID", "openai/gpt-oss-20b")
@@ -69,8 +70,10 @@ def main():
     print(f"PAD token: '{tokenizer.pad_token}' (ID: {tokenizer.pad_token_id})")
     print()
     
-    for ex in test_records[:to_show]:
+    for ex in tqdm(test_records[:to_show], desc="inference", leave=True):
         prompt = ex.get("prompt", "")
+        # Nắn prompt để mô hình trả lời duy nhất 0 hoặc 1
+        prompt = f"{prompt.strip()} Trả lời chỉ 0 hoặc 1:"
         # Don't add EOS to input prompt - let model generate it
         inputs = tokenizer([prompt], return_tensors="pt")
         inputs = {k: v.to(model.device) for k, v in inputs.items()}
@@ -93,19 +96,21 @@ def main():
         new_tokens = out[0][inputs["input_ids"].shape[1]:]
         generated_text = tokenizer.decode(new_tokens, skip_special_tokens=True)
         
-        # Post-process: chỉ giữ lại phần 0 hoặc 1
-        cleaned_output = generated_text.strip()
-        
-        # Tìm vị trí của " 0" hoặc " 1" trong output
-        if " 0" in cleaned_output:
-            start_idx = cleaned_output.find(" 0")
-            cleaned_output = cleaned_output[start_idx:start_idx+2]  # Lấy " 0"
-        elif " 1" in cleaned_output:
-            start_idx = cleaned_output.find(" 1")
-            cleaned_output = cleaned_output[start_idx:start_idx+2]  # Lấy " 1"
-        else:
-            # Nếu không có 0 hoặc 1, chỉ lấy ký tự đầu tiên
-            cleaned_output = cleaned_output[:2].strip()
+        # Post-process: chỉ giữ lại "0" hoặc "1" (chống trường hợp sinh ra kí tự thừa như ")
+        cleaned_output = generated_text.strip().replace('"', '').replace("'", "").strip()
+        # Ưu tiên tìm số đơn lẻ bất kỳ vị trí
+        found = None
+        for ch in cleaned_output:
+            if ch in ("0", "1"):
+                found = ch
+                break
+        if found is None:
+            # Thử tìm pattern có khoảng trắng
+            if " 0" in cleaned_output:
+                found = "0"
+            elif " 1" in cleaned_output:
+                found = "1"
+        cleaned_output = found if found is not None else cleaned_output[:1]
         
         print("==== Prompt ====")
         print(prompt)
