@@ -16,6 +16,7 @@ from peft import LoraConfig, get_peft_model
 from trl import SFTTrainer, SFTConfig
 from transformers import AutoConfig
 from transformers.trainer_callback import TrainerCallback, TrainerControl, TrainerState
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support, classification_report
 from tqdm import tqdm
 import numpy as np
 from torch.utils.data import DataLoader, WeightedRandomSampler
@@ -352,52 +353,25 @@ def main():
             return text, ""
         label = parts[-1].strip()
         prompt_core = " ".join(p.strip() for p in parts[:-1] if p.strip())
-        prompt = f"{prompt_core} Trả lời chỉ 0 hoặc 1:"
-        return prompt, label
+        return prompt_core, label
 
-    def _extract_binary_label(gen_text: str) -> str:
+    def _extract_label_with_allowed(gen_text: str, allowed: str) -> str:
         cleaned = gen_text.strip().replace('"', '').replace("'", "").strip()
         for ch in cleaned:
-            if ch in ("0", "1"):
+            if ch in allowed:
                 return ch
-        if " 0" in cleaned:
-            return "0"
-        if " 1" in cleaned:
-            return "1"
+        for ch in allowed:
+            if f" {ch}" in cleaned:
+                return ch
         return ""
 
-    def _compute_binary_metrics(y_true, y_pred):
-        # y_true/y_pred are lists of "0"/"1"
-        n = len(y_true)
-        tp = sum(1 for t, p in zip(y_true, y_pred) if t == "1" and p == "1")
-        tn = sum(1 for t, p in zip(y_true, y_pred) if t == "0" and p == "0")
-        fp = sum(1 for t, p in zip(y_true, y_pred) if t == "0" and p == "1")
-        fn = sum(1 for t, p in zip(y_true, y_pred) if t == "1" and p == "0")
-
-        # Per-class precision/recall
-        prec_pos = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-        rec_pos = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-        f1_pos = (2 * prec_pos * rec_pos / (prec_pos + rec_pos)) if (prec_pos + rec_pos) > 0 else 0.0
-
-        prec_neg = tn / (tn + fn) if (tn + fn) > 0 else 0.0
-        rec_neg = tn / (tn + fp) if (tn + fp) > 0 else 0.0
-        f1_neg = (2 * prec_neg * rec_neg / (prec_neg + rec_neg)) if (prec_neg + rec_neg) > 0 else 0.0
-
-        macro_f1 = (f1_pos + f1_neg) / 2.0
-        macro_prec = (prec_pos + prec_neg) / 2.0
-        macro_rec = (rec_pos + rec_neg) / 2.0
-        acc = (tp + tn) / n if n > 0 else 0.0
-
-        return {
-            "accuracy": acc,
-            "precision_macro": macro_prec,
-            "recall_macro": macro_rec,
-            "f1_macro": macro_f1,
-            "tp": tp,
-            "tn": tn,
-            "fp": fp,
-            "fn": fn,
-        }
+    def _compute_multi_metrics(y_true, y_pred, labels_sorted):
+        acc = accuracy_score(y_true, y_pred)
+        prec, rec, f1, _ = precision_recall_fscore_support(
+            y_true, y_pred, labels=labels_sorted, average='macro', zero_division=0
+        )
+        report = classification_report(y_true, y_pred, labels=labels_sorted, digits=4, zero_division=0)
+        return acc, prec, rec, f1, report
 
     class TQDMCallback(TrainerCallback):
         def __init__(self):
@@ -423,6 +397,14 @@ def main():
             self.best_f1 = -1.0
             self.no_improve = 0
             self.patience = patience_epochs
+            # infer allowed labels from val set
+            labels_seen = set()
+            for ex in self.val_dataset:
+                text = ex["text"]
+                _, label = _parse_text_to_prompt_and_label(text)
+                if label in {"0", "1", "2", "3"}:
+                    labels_seen.add(label)
+            self.allowed = ''.join(sorted(labels_seen)) or '01'
 
         def on_epoch_end(self, args, state: TrainerState, control: TrainerControl, model=None, **kwargs):
             model.eval()
@@ -431,9 +413,19 @@ def main():
 
             for ex in tqdm(self.val_dataset, desc=f"validate epoch {int(state.epoch) if state.epoch is not None else '?'}", leave=False):
                 text = ex["text"]
-                prompt, label = _parse_text_to_prompt_and_label(text)
-                if label not in ("0", "1"):
+                prompt_core, label = _parse_text_to_prompt_and_label(text)
+                if label not in set(self.allowed):
                     continue
+                # build constrained hint
+                if self.allowed == '01':
+                    hint = " Trả lời chỉ 0 hoặc 1:"
+                elif self.allowed == '012':
+                    hint = " Trả lời chỉ 0, 1 hoặc 2:"
+                elif self.allowed == '0123':
+                    hint = " Trả lời chỉ 0, 1, 2 hoặc 3:"
+                else:
+                    hint = f" Trả lời chỉ {', '.join(list(self.allowed))}:"
+                prompt = f"{prompt_core}{hint}"
 
                 inputs = self.tokenizer([prompt], return_tensors="pt")
                 inputs = {k: v.to(model.device) for k, v in inputs.items()}
@@ -451,23 +443,30 @@ def main():
 
                 new_tokens = out[0][inputs["input_ids"].shape[1]:]
                 gen = self.tokenizer.decode(new_tokens, skip_special_tokens=True)
-                pred = _extract_binary_label(gen)
-                if pred not in ("0", "1"):
-                    # fallback: treat as wrong prediction
-                    pred = "0"
+                pred = _extract_label_with_allowed(gen, self.allowed)
+                if pred not in set(self.allowed):
+                    # fallback: mark as wrong
+                    pred = ""
 
                 y_true.append(label)
                 y_pred.append(pred)
 
-            metrics = _compute_binary_metrics(y_true, y_pred)
+            # filter out invalid preds
+            pairs = [(t, p) for t, p in zip(y_true, y_pred) if t in set(self.allowed) and p in set(self.allowed)]
+            if not pairs:
+                tqdm.write("No valid predictions for evaluation.")
+                return
+            y_true_f, y_pred_f = zip(*pairs)
+            labels_sorted = sorted(list(set(self.allowed)))
+            acc, prec, rec, f1, report = _compute_multi_metrics(list(y_true_f), list(y_pred_f), labels_sorted)
             tqdm.write(
-                f"val epoch={state.epoch:.2f} acc={metrics['accuracy']:.4f} f1_macro={metrics['f1_macro']:.4f} "
-                f"prec_macro={metrics['precision_macro']:.4f} rec_macro={metrics['recall_macro']:.4f}"
+                f"val epoch={state.epoch:.2f} acc={acc:.4f} f1_macro={f1:.4f} prec_macro={prec:.4f} rec_macro={rec:.4f}"
             )
+            tqdm.write("Per-class report:\n" + report)
 
             # Save best by macro F1
-            if metrics["f1_macro"] > self.best_f1:
-                self.best_f1 = metrics["f1_macro"]
+            if f1 > self.best_f1:
+                self.best_f1 = f1
                 self.no_improve = 0
                 save_dir = os.path.join(self.output_dir, "best")
                 os.makedirs(save_dir, exist_ok=True)
