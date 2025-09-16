@@ -1,241 +1,296 @@
-# GPT-OSS 20B Vietnamese Social Media Fake News Detection
+# GPT-OSS 20B + QLoRA – Vietnamese Sentiment (UIT-VSFC)
 
-A fine-tuned GPT-OSS 20B model for Vietnamese social media fake news detection using QLoRA (Quantized Low-Rank Adaptation) technique.
-
-## 🎯 Project Overview
-
-This project fine-tunes the `openai/gpt-oss-20b` model on Vietnamese social media posts to classify them as **THẬT (Real - 0)** or **GIẢ (Fake - 1)**. The model achieves **87.2% accuracy** on the test dataset with excellent precision and recall scores.
-
-## 📊 Model Performance
-
-| Metric | Score |
-|--------|-------|
-| **Accuracy** | 87.2% |
-| **Precision** | 89.5% |
-| **Recall** | 87.2% |
-| **F1-Score** | 88.0% |
-| **Success Rate** | 87.0% |
-
-### Test Dataset Statistics
-- **Total Examples**: 486
-- **Correct Predictions**: 423
-- **Error Predictions**: 1
+End-to-end pipeline to fine-tune `openai/gpt-oss-20b` on UIT-VSFC for 3-class sentiment (0=negative, 1=neutral, 2=positive), with weighted loss, constrained decoding, and full evaluation.
 
 ## 🚀 Quick Start
 
-### 1. Installation
+### 1) Cài đặt
 
 ```bash
-# Clone the repository
-git clone https://github.com/coderkhongodo/gpt_oss.git
-cd gpt_oss
-
-# Install dependencies
 pip install -r requirements.txt
 ```
 
-### 2. Model Usage
+Yêu cầu phần cứng/phần mềm:
+- Python 3.10+
+- GPU: A6000 Ada 48GB (đã kiểm thử tốt). Các GPU VRAM ≥ 24GB cũng có thể chạy khi bật QLoRA + grad accumulation.
+- CUDA: 12.8 (PyTorch 2.2+ hỗ trợ CUDA 12.x). Cài đặt theo hướng dẫn PyTorch chính thức tương ứng hệ điều hành.
 
-#### Using Hugging Face Model Hub
+Gợi ý cài PyTorch phù hợp CUDA 12.x (Windows/Linux, pip):
+
+```bash
+# CUDA 12.x build (khuyên dùng):
+pip install --index-url https://download.pytorch.org/whl/cu121 torch torchvision torchaudio
+
+# Nếu dùng CPU-only (không khuyến nghị để train):
+# pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision torchaudio
+```
+
+Lưu ý:
+- CUDA hệ thống 12.8 tương thích với build cu121 của PyTorch.
+- bitsandbytes>=0.43.0 hỗ trợ CUDA 12.x; trên Windows cần bản Python 3.10+.
+
+### 2) Chuẩn bị dữ liệu (UIT-VSFC)
+
+Đặt dữ liệu gốc ở:
+
+```
+data/uit-vsfc/
+  train/{sents.txt, sentiments.txt, topics.txt}
+  dev/{sents.txt, sentiments.txt, topics.txt}
+  test/{sents.txt, sentiments.txt, topics.txt}
+```
+
+Sinh instruction 3 lớp (kèm “Đáp án:”):
+
+```bash
+python src/processing/prepare_vsfc_sentiment.py
+```
+
+Đầu ra:
+
+```
+data_processed/jsonl_text_vsfc_sentiment/
+  train_instruction.jsonl
+  val_instruction.jsonl
+  test_instruction.jsonl
+```
+
+## 🛠️ Huấn luyện (QLoRA)
+
+Script: `src/train/train_qlora_gpt_oss_20b.py` (argparse đầy đủ).
+
+Ví dụ train chuẩn 3 lớp với class-weights (neutral=5):
+
+```bash
+python src/train/train_qlora_gpt_oss_20b.py \
+  --model_id openai/gpt-oss-20b \
+  --data_dir data_processed/jsonl_text_vsfc_sentiment \
+  --output_dir models/gpt-oss-20b-qlora-sent-3cls \
+  --train_file train_instruction.jsonl \
+  --val_file val_instruction.jsonl \
+  --batch_size 1 --eval_batch_size 1 --grad_accum 16 \
+  --lr 5e-4 --epochs 3 --log_steps 10 \
+  --optim paged_adamw_8bit --report_to none \
+  --warmup_ratio 0.1 --save_total_limit 3 \
+  --lora_r 32 --lora_alpha 64 --lora_dropout 0.1 \
+  --class_weights "1.0,5.0,1.0"
+```
+
+Chế độ thử nhanh (subset + epochs nhỏ):
+
+```bash
+python src/train/train_qlora_gpt_oss_20b.py \
+  --model_id openai/gpt-oss-20b \
+  --data_dir data_processed/jsonl_text_vsfc_sentiment \
+  --output_dir models/gpt-oss-20b-qlora-sent-3cls-test \
+  --train_file train_instruction.jsonl \
+  --val_file val_instruction.jsonl \
+  --batch_size 1 --eval_batch_size 1 --grad_accum 4 \
+  --lr 5e-4 --epochs 1 --test_mode
+```
+
+Notes cấu hình trên A6000 Ada 48GB + CUDA 12.8:
+- Mặc định script tự phát hiện pre-quant (MXFP4). Nếu base model không có pre-quant, sẽ fallback 4-bit (bitsandbytes) để vừa VRAM.
+- Khuyến nghị: `--batch_size 1 --grad_accum 16..32`, `--bf16` bật sẵn; có thể tăng `--epochs` tuỳ thời gian.
+- Weighted loss áp tại token nhãn cuối cùng (mapping nhãn '0','1','2').
+
+### Class weights + sampling (đề xuất cho sentiment – neutral ~4.3%)
+
+Hai kỹ thuật bổ trợ nhau (không trùng lặp):
+
+- Class weights: phạt lỗi của lớp neutral mạnh hơn → gradient cải thiện mỗi lần neutral xuất hiện.
+- Oversampling/weighted sampling: tăng tần suất neutral trong batch → mô hình “thấy biên” đủ để học. Với `batch_size=1`, nếu không tăng tần suất, có thể phải chạy hàng chục bước mới gặp neutral → weights khó phát huy.
+
+Khuyến nghị thực dụng (train-only, giữ nguyên dev/test):
+
+- Mục tiêu “tần suất neutral” ~15–20% bước train.
+- Class weights khởi điểm: `neg=1.0, neutral=5.0, pos=1.0` (thử grid 3/5/7 cho neutral).
+- Sampling weights (xác suất lấy mẫu theo lớp) hướng tới tỉ lệ ~ `neg:neu:pos = 0.4:0.2:0.4`.
+
+Ví dụ dùng `WeightedRandomSampler` (minh hoạ):
 
 ```python
-from transformers import AutoTokenizer, AutoModelForCausalLM
-from peft import PeftModel
-import torch
+from torch.utils.data import DataLoader, WeightedRandomSampler
+import numpy as np
 
-# Load base model and tokenizer
-model_name = "openai/gpt-oss-20b"
-adapter_name = "PhaaNe/gpt_oss"
+# y: list/array nhãn 0/1/2 theo thứ tự mẫu trong tập train
+cls_counts = np.bincount(y, minlength=3)  # [cnt_neg, cnt_neu, cnt_pos]
+target_ratio = np.array([0.40, 0.20, 0.40])
 
-tokenizer = AutoTokenizer.from_pretrained(model_name)
-base_model = AutoModelForCausalLM.from_pretrained(
-    model_name,
-    torch_dtype=torch.float16,
-    device_map="auto"
-)
+curr_ratio = cls_counts / cls_counts.sum()
+scale = target_ratio / (curr_ratio + 1e-9)
+class_weights_for_sampling = scale / scale.sum()
 
-# Load fine-tuned adapter
-model = PeftModel.from_pretrained(base_model, adapter_name)
+sample_weights = np.array([class_weights_for_sampling[label] for label in y], dtype=np.float64)
+sampler = WeightedRandomSampler(weights=sample_weights, num_samples=len(sample_weights), replacement=True)
 
-# Example inference
-def classify_news(text):
-    prompt = f"Hãy phân loại bài đăng mạng xã hội sau đây là THẬT (0) hay GIẢ (1): {text}"
-    
-    inputs = tokenizer(prompt, return_tensors="pt")
-    with torch.no_grad():
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=10,
-            temperature=0.1,
-            do_sample=True
-        )
-    
-    response = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    return response.split()[-1]  # Extract prediction
-
-# Test example
-news_text = "Dự báo thời tiết hôm nay: Nắng nóng gia tăng ở Bắc Bộ và Trung Bộ"
-result = classify_news(news_text)
-print(f"Prediction: {result}")  # Should output "0" for real news
+loader = DataLoader(train_dataset, batch_size=1, sampler=sampler)
 ```
 
-#### Using Local Model
+Ghi chú:
+- Khi dùng TRL SFTTrainer, để áp sampler tuỳ biến cần bọc dataset hoặc tự tạo `Trainer`/`DataLoader` ngoài. Nếu muốn, bạn có thể mở PR để tích hợp cờ `--weighted_sampler` vào pipeline.
+
+Tích hợp sẵn trong script train (đã hỗ trợ cờ):
 
 ```bash
-# Run inference script
-python inference_gpt_oss_20b.py
+python src/train/train_qlora_gpt_oss_20b.py \
+  --model_id openai/gpt-oss-20b \
+  --data_dir data_processed/jsonl_text_vsfc_sentiment \
+  --output_dir models/gpt-oss-20b-qlora-sent-3cls-balanced \
+  --train_file train_instruction.jsonl \
+  --val_file val_instruction.jsonl \
+  --batch_size 1 --eval_batch_size 1 --grad_accum 16 \
+  --lr 5e-4 --epochs 3 \
+  --class_weights "1.0,5.0,1.0" \
+  --weighted_sampler --target_sampling_ratio "0.40,0.20,0.40"
 ```
 
-## 🛠️ Training from Scratch
+## 🔎 Suy luận (constrained decoding tuỳ chọn)
 
-### Prerequisites
-
-- **Hardware**: GPU with at least 24GB VRAM (recommended: 48GB+)
-- **Software**: Python 3.8+, CUDA 11.8+
-
-### Dataset Format
-
-Your dataset should be in JSONL format with the following structure:
-
-```json
-{"instruction": "Hãy phân loại bài đăng mạng xã hội sau đây là THẬT (0) hay GIẢ (1):", "input": "Your news text here", "output": "0"}
-```
-
-Place your files in the `jsonl_text/` directory:
-- `train_instruction.jsonl` - Training data
-- `val_instruction.jsonl` - Validation data
-- `test_instruction.jsonl` - Test data (optional)
-
-### Training Configuration
-
-#### Environment Variables
+Script: `src/interface/inference_gpt_oss_20b.py`
 
 ```bash
-# Model and Data
-export MODEL_ID="openai/gpt-oss-20b"
-export DATA_DIR="jsonl_text"
-export OUTPUT_DIR="gpt-oss-20b-qlora-finetune"
-
-# Training Parameters
-export BATCH_SIZE="1"
-export EVAL_BATCH_SIZE="1"
-export GRAD_ACCUM="32"
-export LR="2e-4"
-export EPOCHS="1"
-export MAX_SEQ_LEN="2048"
-export EVAL_STEPS="200"
-export SAVE_STEPS="200"
-export OPTIM="paged_adamw_8bit"
+python src/interface/inference_gpt_oss_20b.py --constrained --allowed_labels 012
 ```
 
-#### Start Training
+Tuỳ chọn:
+- `--allowed_labels`: chuỗi nhãn cho phép (vd: `012` cho 3 lớp).
+- `--num_samples`: số lượng mẫu hiển thị từ file test nhỏ (nếu dùng `jsonl_text_small/test.jsonl`).
+
+## 📈 Đánh giá trên tập test
+
+Script: `src/eval/evaluate_model.py`
 
 ```bash
-# For 48GB VRAM setup
-python train_qlora_gpt_oss_20b.py
+python src/eval/evaluate_model.py \
+  --model_id openai/gpt-oss-20b \
+  --adapter_dir models/gpt-oss-20b-qlora-sent-3cls/best \
+  --test_file data_processed/jsonl_text_vsfc_sentiment/test_instruction.jsonl \
+  --allowed_labels 012 \
+  --max_samples 0 \
+  --output_csv eval_results_vsfc.csv \
+  --summary_json eval_summary_vsfc.json \
+  --report_txt classification_report_vsfc.txt \
+  --cm_csv confusion_matrix_vsfc.csv
 ```
 
-### Training Features
+In ra và lưu:
+- Accuracy, Precision/Recall/F1 (macro)
+- Classification report (txt)
+- Confusion matrix (CSV)
+- Kết quả chi tiết từng mẫu (CSV) và summary (JSON)
 
-- **QLoRA 4-bit Quantization**: Reduces memory usage by ~75%
-- **Paged AdamW 8-bit**: Optimized memory management
-- **Gradient Accumulation**: Simulates larger batch sizes
-- **LoRA Adapters**: Efficient fine-tuning with minimal parameters
-- **Automatic Mixed Precision**: Faster training with reduced memory
+## 🧩 Bài toán Topic (UIT-VSFC – 4 lớp)
 
-## 📁 Project Structure
-
-```
-gpt_oss/
-├── train_qlora_gpt_oss_20b.py      # Training script
-├── inference_gpt_oss_20b.py        # Inference script
-├── evaluate_model.py               # Model evaluation
-├── convert_data_format.py          # Data preprocessing
-├── requirements.txt                # Dependencies
-├── README.md                       # This file
-├── .gitignore                      # Git ignore rules
-├── jsonl_text/                     # Dataset directory
-│   ├── train_instruction.jsonl
-│   ├── val_instruction.jsonl
-│   └── test_instruction.jsonl
-└── gpt-oss-20b-qlora-finetune-v2/  # Trained model (excluded from git)
-    ├── adapter_config.json
-    ├── adapter_model.safetensors
-    ├── tokenizer_config.json
-    └── ...
-```
-
-## 🔧 Configuration Details
-
-### QLoRA Configuration
-- **Rank**: 64
-- **Alpha**: 16
-- **Dropout**: 0.1
-- **Target Modules**: All linear layers
-- **Quantization**: 4-bit (NF4)
-
-### Training Parameters
-- **Learning Rate**: 2e-4
-- **Batch Size**: 1 (with gradient accumulation 32)
-- **Max Sequence Length**: 2048
-- **Epochs**: 1
-- **Optimizer**: Paged AdamW 8-bit
-- **Scheduler**: Cosine with warmup
-
-## 📈 Evaluation
-
-Run the evaluation script to test model performance:
+### 1) Chuẩn bị dữ liệu topic
 
 ```bash
-python evaluate_model.py
+python src/processing/prepare_vsfc_topic.py
 ```
 
-This will generate:
-- `my_results.csv`: Detailed predictions for each test sample
-- `evaluation_summary.json`: Overall performance metrics
+Đầu ra:
 
-## 🌐 Model Availability
+```
+data_processed/jsonl_text_vsfc_topic/
+  train_instruction.jsonl
+  val_instruction.jsonl
+  test_instruction.jsonl
+```
 
-- **Hugging Face Hub**: [PhaaNe/gpt_oss](https://huggingface.co/PhaaNe/gpt_oss)
-- **GitHub Repository**: [coderkhongodo/gpt_oss](https://github.com/coderkhongodo/gpt_oss)
+### 2) Huấn luyện topic (QLoRA)
+
+```bash
+python src/train/train_qlora_gpt_oss_20b.py \
+  --model_id openai/gpt-oss-20b \
+  --data_dir data_processed/jsonl_text_vsfc_topic \
+  --output_dir models/gpt-oss-20b-qlora-topic-4cls \
+  --train_file train_instruction.jsonl \
+  --val_file val_instruction.jsonl \
+  --batch_size 1 --eval_batch_size 1 --grad_accum 16 \
+  --lr 5e-4 --epochs 3 --log_steps 10 \
+  --optim paged_adamw_8bit --report_to none \
+  --warmup_ratio 0.1 --save_total_limit 3 \
+  --lora_r 32 --lora_alpha 64 --lora_dropout 0.1
+```
+
+Chế độ thử nhanh:
+
+```bash
+python src/train/train_qlora_gpt_oss_20b.py \
+  --model_id openai/gpt-oss-20b \
+  --data_dir data_processed/jsonl_text_vsfc_topic \
+  --output_dir models/gpt-oss-20b-qlora-topic-4cls-test \
+  --train_file train_instruction.jsonl \
+  --val_file val_instruction.jsonl \
+  --batch_size 1 --eval_batch_size 1 --grad_accum 4 \
+  --lr 5e-4 --epochs 1 --test_mode
+```
+
+### 3) Suy luận topic (ràng buộc 0/1/2/3)
+
+```bash
+python src/interface/inference_gpt_oss_20b.py --constrained --allowed_labels 0123
+```
+
+### 4) Đánh giá topic
+
+Sử dụng evaluator chung (hỗ trợ `--allowed_labels 0123`):
+
+```bash
+python src/eval/evaluate_model.py \
+  --model_id openai/gpt-oss-20b \
+  --adapter_dir models/gpt-oss-20b-qlora-topic-4cls/best \
+  --test_file data_processed/jsonl_text_vsfc_topic/test_instruction.jsonl \
+  --allowed_labels 0123 \
+  --output_csv eval_results_topic.csv \
+  --summary_json eval_summary_topic.json \
+  --report_txt classification_report_topic.txt \
+  --cm_csv confusion_matrix_topic.csv
+```
+
+### 5) Gợi ý class weights cho topic (mất cân bằng)
+
+Theo phân bố ví dụ (0:11607, 1:3040, 2:712, 3:816), có thể bắt đầu với:
+
+- Khuyến nghị (sqrt-inverse, ổn định): `--class_weights "1.0,2.0,4.1,3.8"`
+- Mạnh hơn (inverse freq, có giới hạn): `--class_weights "1.0,3.5,6.0,5.5"`
+
+Tip: bắt đầu với bộ sqrt-inverse; nếu lớp hiếm (2,3) còn yếu, tăng dần trọng số 2→4.5 và 3→4.2. Luôn bật constrained decoding khi suy luận: `--constrained --allowed_labels 0123`.
+
+## 📊 Phân tích dữ liệu
+
+Script EDA: `src/analysis/sentiment_eda_vsfc.py`
+
+```bash
+python src/analysis/sentiment_eda_vsfc.py --vsfc_dir data/uit-vsfc --save_plots --save_preview
+```
+
+Sinh biểu đồ phân bố nhãn, độ dài; preview JSONL 3 lớp.
+
+## 🧭 Cấu trúc dự án (rút gọn)
+
+```
+data/uit-vsfc/...
+data_processed/jsonl_text_vsfc_sentiment/{train,val,test}_instruction.jsonl
+models/gpt-oss-20b-qlora-*/best/
+src/
+  analysis/sentiment_eda_vsfc.py
+  eval/evaluate_model.py
+  interface/inference_gpt_oss_20b.py
+  processing/prepare_vsfc_sentiment.py
+  train/train_qlora_gpt_oss_20b.py
+```
 
 ## 📋 Requirements
 
 ```
-torch>=2.0.0
-transformers>=4.35.0
-peft>=0.6.0
-trl>=0.7.0
-datasets>=2.14.0
-accelerate>=0.24.0
-bitsandbytes>=0.41.0
+torch>=2.1.0
+transformers>=4.42.0
+peft>=0.11.1
+trl>=0.9.4
+datasets>=2.20.0
+accelerate>=0.31.0
+bitsandbytes>=0.43.0
 scikit-learn>=1.3.0
 pandas>=2.0.0
 ```
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- OpenAI for the GPT-OSS 20B base model
-- Hugging Face for the Transformers library
-- QLoRA paper authors for the efficient fine-tuning technique
-- Vietnamese NLP community for dataset contributions
-
-## 📞 Contact
-
-For questions or support, please open an issue on GitHub or contact the maintainers.
-
----
-
-**Note**: This model is specifically trained for Vietnamese social media content and may not perform well on other languages or domains. Always validate predictions with human judgment for critical applications.
