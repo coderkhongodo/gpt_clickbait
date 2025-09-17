@@ -196,13 +196,31 @@ def evaluate_model():
     if true_labels and predicted_labels:
         labels_sorted = sorted(list(set(list(args.allowed_labels))))
         accuracy = accuracy_score(true_labels, predicted_labels)
-        precision, recall, f1, _ = precision_recall_fscore_support(
+        
+        # Calculate different F1 scores
+        precision_macro, recall_macro, f1_macro, _ = precision_recall_fscore_support(
             true_labels, predicted_labels, labels=labels_sorted, average='macro', zero_division=0
         )
+        precision_weighted, recall_weighted, f1_weighted, _ = precision_recall_fscore_support(
+            true_labels, predicted_labels, labels=labels_sorted, average='weighted', zero_division=0
+        )
+        precision_micro, recall_micro, f1_micro, _ = precision_recall_fscore_support(
+            true_labels, predicted_labels, labels=labels_sorted, average='micro', zero_division=0
+        )
+        
         print(f"Accuracy: {accuracy:.4f}")
-        print(f"Precision (macro): {precision:.4f}")
-        print(f"Recall (macro): {recall:.4f}")
-        print(f"F1-Score (macro): {f1:.4f}")
+        print(f"\n=== F1 SCORES ===")
+        print(f"F1-Score (macro): {f1_macro:.4f}")
+        print(f"F1-Score (weighted): {f1_weighted:.4f}")
+        print(f"F1-Score (micro): {f1_micro:.4f}")
+        print(f"\n=== PRECISION ===")
+        print(f"Precision (macro): {precision_macro:.4f}")
+        print(f"Precision (weighted): {precision_weighted:.4f}")
+        print(f"Precision (micro): {precision_micro:.4f}")
+        print(f"\n=== RECALL ===")
+        print(f"Recall (macro): {recall_macro:.4f}")
+        print(f"Recall (weighted): {recall_weighted:.4f}")
+        print(f"Recall (micro): {recall_micro:.4f}")
         # Detailed classification report
         print("\nDetailed Classification Report:")
         report = classification_report(true_labels, predicted_labels, labels=labels_sorted, digits=4, zero_division=0)
@@ -244,9 +262,15 @@ def evaluate_model():
         'error_predictions': error_predictions,
         'success_rate': correct_predictions/total_examples,
         'accuracy': accuracy if 'accuracy' in locals() else 0,
-        'precision': precision if 'precision' in locals() else 0,
-        'recall': recall if 'recall' in locals() else 0,
-        'f1_score': f1 if 'f1' in locals() else 0
+        'precision_macro': precision_macro if 'precision_macro' in locals() else 0,
+        'precision_weighted': precision_weighted if 'precision_weighted' in locals() else 0,
+        'precision_micro': precision_micro if 'precision_micro' in locals() else 0,
+        'recall_macro': recall_macro if 'recall_macro' in locals() else 0,
+        'recall_weighted': recall_weighted if 'recall_weighted' in locals() else 0,
+        'recall_micro': recall_micro if 'recall_micro' in locals() else 0,
+        'f1_macro': f1_macro if 'f1_macro' in locals() else 0,
+        'f1_weighted': f1_weighted if 'f1_weighted' in locals() else 0,
+        'f1_micro': f1_micro if 'f1_micro' in locals() else 0
     }
     
     with open(args.summary_json, 'w', encoding='utf-8') as f:

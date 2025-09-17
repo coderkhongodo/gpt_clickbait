@@ -64,7 +64,7 @@ logs/
 transformers_cache/
 
 # Results and outputs
-results/
+
 outputs/
 my_results.csv
 evaluation_summary.json

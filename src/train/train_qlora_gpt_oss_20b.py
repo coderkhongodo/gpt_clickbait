@@ -223,7 +223,7 @@ class WeightedSFTTrainer(SFTTrainer):
         self.class_weight_map = class_weight_map or {}
         self._tok = tokenizer
 
-    def compute_loss(self, model, inputs, return_outputs=False):
+    def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
         labels = inputs.get("labels")
         outputs = model(**{k: v for k, v in inputs.items() if k != "labels"})
         logits = outputs.logits  # [B, T, V]
@@ -345,6 +345,12 @@ def main():
         dataloader_pin_memory=False,
         remove_unused_columns=False,
     )
+
+    # Khi bật weighted_sampler, cần tắt packing để đảm bảo chỉ số dataset
+    # khớp với độ dài weights của sampler, tránh lỗi out-of-bounds.
+    if args.weighted_sampler and training_args.packing:
+        training_args.packing = False
+        tqdm.write("packing disabled because weighted_sampler is enabled")
 
     def _parse_text_to_prompt_and_label(text: str) -> (str, str):
         # text format: instruction + \n\n + optional input + \n\n + output
@@ -524,7 +530,12 @@ def main():
         sample_weights = np.array([class_weights_for_sampling[label_to_index.get(l, 0)] for l in labels], dtype=np.float64)
 
         # Create a DataLoader with custom sampler and replace trainer's train_dataloader
-        sampler = WeightedRandomSampler(weights=sample_weights, num_samples=len(sample_weights), replacement=True)
+        # Khi không packing, kích thước dataset ~ số mẫu; dùng min để an toàn
+        actual_dataset_size = len(trainer.train_dataset)
+        num_samples = int(min(actual_dataset_size, sample_weights.shape[0]))
+        if num_samples <= 0:
+            num_samples = actual_dataset_size
+        sampler = WeightedRandomSampler(weights=sample_weights, num_samples=num_samples, replacement=True)
         train_dataloader = DataLoader(
             trainer.train_dataset,
             batch_size=training_args.per_device_train_batch_size,
