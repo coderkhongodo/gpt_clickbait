@@ -111,6 +111,8 @@ Các file sinh ra:
 - `results/eval_results_topic_test.csv`: dự đoán chi tiết từng mẫu
 
 ##### 6.3.1. Tóm tắt số liệu test (đã chạy)
+
+Kết quả GPT-OSS 20B (QLoRA) — nguồn: `results/eval_summary_topic_test.json` và `results/classification_report_topic_test.txt`
 - Tổng mẫu: 3,166 — Accuracy: 87.18%
 - F1: Macro 79.15%, Weighted 87.57%, Micro 87.18%
 
@@ -123,10 +125,27 @@ Các file sinh ra:
 | Macro Avg      | 77.19 | 81.53 | 79.15 | 3166 |
 | Weighted Avg   | 88.18 | 87.18 | 87.57 | 3166 |
 
-Nhận xét nhanh:
-- So với baseline MaxEnt (F1 macro 84.03), mô hình hiện tại đạt F1 macro 79.15 trên test — thấp hơn ~4.9 điểm, nhưng F1 từng lớp 1/2/3 cải thiện đáng kể so với giai đoạn đầu huấn luyện; lớp 3 (Others) đạt F1 56.25% (cao hơn baseline 38.10%).
-- Lớp 1 (Curriculum) đạt F1 73.66%, cao hơn baseline 67.19%.
-- Tiếp tục tinh chỉnh (tăng epoch, điều chỉnh weights) có thể giúp tiến gần/ vượt F1 macro baseline.
+Kết quả baseline PhoBERT — nguồn: `results/phobert_topic_eval_summary.json` và `results/phobert_topic_classification_report.txt`
+- Accuracy: 89.13%
+- F1: Macro 78.89%, Weighted 88.90%
+
+| Lớp | Precision | Recall | F1-score | Support |
+|---|---:|---:|---:|---:|
+| Lecturer (0)   | 92.98 | 95.46 | 94.20 | 2290 |
+| Curriculum (1) | 80.92 | 73.43 | 76.99 | 572  |
+| Facility (2)   | 88.16 | 92.41 | 90.24 | 145  |
+| Others (3)     | 56.94 | 51.57 | 54.13 | 159  |
+| Macro Avg      | 79.75 | 78.22 | 78.89 | 3166 |
+| Weighted Avg   | 88.77 | 89.13 | 88.90 | 3166 |
+
+So sánh nhanh GPT-OSS vs PhoBERT (trên test):
+- Accuracy: PhoBERT nhỉnh hơn (89.13% vs 87.18%).
+- F1 macro: gần tương đương (79.15% vs 78.89%).
+- Theo lớp: GPT-OSS tốt hơn lớp 1 và 2; PhoBERT nhỉnh hơn lớp 0; lớp 3 tương đương (F1 ~56). 
+
+Nhận xét:
+- Hai mô hình cho chất lượng sát nhau về F1 macro; PhoBERT có độ chính xác tổng thể cao hơn nhẹ.
+- GPT-OSS 20B linh hoạt hơn cho instruction-format và có thể cải thiện thêm qua tinh chỉnh class weights/epochs.
 
 Nhận xét:
 - Ba lớp chính (0,1,2) đạt và vượt baseline sớm; lớp 3 (Others) cải thiện dần theo thời gian huấn luyện.

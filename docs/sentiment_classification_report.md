@@ -70,14 +70,18 @@ mkdir -p results && python3 src/eval/evaluate_model.py \\
   --cm_csv results/confusion_matrix_sent2cls_test.csv
 ```
 
-### 7. Kết quả test (2 lớp) — lấy từ `results/`
+### 7. Kết quả test (2 lớp) — đọc từ `results/`
 
-Tóm tắt `results/eval_summary_sent2cls_test.json`:
+#### 7.1. Tóm tắt tổng hợp
+Nguồn: `results/eval_summary_sent2cls_test.json`
+- Tổng mẫu: 2,999
+- Accuracy: 96.80%
+- Precision: macro 96.75%, weighted 96.82%, micro 96.80%
+- Recall: macro 96.85%, weighted 96.80%, micro 96.80%
+- F1-score: macro 96.79%, weighted 96.80%, micro 96.80%
 
-- Tổng mẫu: 2,999 — Accuracy: 96.80%
-- F1: Macro 96.79%, Weighted 96.80%, Micro 96.80%
-
-Bảng `results/classification_report_sent2cls_test.txt`:
+#### 7.2. Báo cáo theo lớp
+Nguồn: `results/classification_report_sent2cls_test.txt`
 
 | Lớp | Precision | Recall | F1-score | Support |
 |---|---:|---:|---:|---:|
@@ -87,15 +91,28 @@ Bảng `results/classification_report_sent2cls_test.txt`:
 | Macro avg | 96.75 | 96.85 | 96.79 | 2999 |
 | Weighted avg | 96.82 | 96.80 | 96.80 | 2999 |
 
-### 8. Lưu ý hiệu năng
+#### 7.3. Ma trận nhầm lẫn
+Nguồn: `results/confusion_matrix_sent2cls_test.csv`
+
+|        | pred_0 | pred_1 |
+|--------|-------:|-------:|
+| true_0 |   1377 |     32 |
+| true_1 |     64 |   1526 |
+
+### 8. Nhận xét
+- Mô hình 2 lớp đạt độ chính xác và F1 rất cao, cân bằng tốt giữa hai lớp (F1 từng lớp đều ~96–97%).
+- Tỷ lệ nhầm lẫn thấp ở cả hai chiều (32 và 64 mẫu), thể hiện biên phân tách rõ ràng sau khi loại neutral.
+- Không dùng weighted sampler giúp tốc độ huấn luyện nhanh, ổn định; có thể tăng thêm epochs nếu muốn tối ưu thêm.
+
+### 9. Lưu ý hiệu năng
 - Bật packing giúp tốc độ nhanh. Nếu dùng weighted sampler (3 lớp), code tự chuyển sang không packing để an toàn chỉ số → tốc độ chậm hơn; có thể giảm epochs/giới hạn mẫu để thử nhanh.
 
-### 9. Tái lập thí nghiệm
+### 10. Tái lập thí nghiệm
 1) Chuẩn bị dữ liệu theo 3 lớp hoặc 2 lớp.
 2) Huấn luyện theo lệnh ở mục 4.
 3) Đánh giá theo lệnh ở mục 6 để sinh các file trong `results/`.
 
-### 10. Hướng cải thiện
+### 11. Hướng cải thiện
 - Với 3 lớp: tăng class weights/sampler cho neutral, thử focal loss, tăng epochs; điều chỉnh lr nhỏ hơn ở giai đoạn finetune.
 - Với 2 lớp: có thể tăng `--epochs` để đạt F1 cao hơn và thử regularization nhẹ (dropout/weight decay mặc định của optimizer).
 
