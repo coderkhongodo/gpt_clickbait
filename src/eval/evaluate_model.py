@@ -13,13 +13,13 @@ import pandas as pd
 def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate LoRA-adapted GPT-OSS model on instruction JSONL test set")
     parser.add_argument("--model_id", type=str, default=os.environ.get("MODEL_ID", "openai/gpt-oss-20b"))
-    parser.add_argument("--adapter_dir", type=str, default=os.environ.get("ADAPTER_DIR", "models/gpt-oss-20b-qlora-sent-3cls-test/best"))
-    parser.add_argument("--test_file", type=str, default=os.environ.get("TEST_FILE", os.path.join("data_processed", "jsonl_text_vsfc_sentiment", "test_instruction.jsonl")))
+    parser.add_argument("--adapter_dir", type=str, default=os.environ.get("ADAPTER_DIR", "models/gpt-oss-20b-qlora-clickbait/best"))
+    parser.add_argument("--test_file", type=str, default=os.environ.get("TEST_FILE", os.path.join("data_processed", "jsonl_text_clickbait", "test_instruction.jsonl")))
     parser.add_argument("--output_csv", type=str, default=os.environ.get("OUTPUT_CSV", "evaluation_results.csv"))
     parser.add_argument("--summary_json", type=str, default=os.environ.get("SUMMARY_JSON", "evaluation_summary.json"))
     parser.add_argument("--report_txt", type=str, default=os.environ.get("REPORT_TXT", "classification_report.txt"))
     parser.add_argument("--cm_csv", type=str, default=os.environ.get("CM_CSV", "confusion_matrix.csv"))
-    parser.add_argument("--allowed_labels", type=str, default=os.environ.get("ALLOWED_LABELS", "012"), help="Set of allowed labels, e.g. '01' or '0123'")
+    parser.add_argument("--allowed_labels", type=str, default=os.environ.get("ALLOWED_LABELS", "01"), help="Set of allowed labels, e.g. '01' for binary classification")
     parser.add_argument("--max_samples", type=int, default=int(os.environ.get("MAX_SAMPLES", 0)), help="Limit number of evaluated samples (0 = all)")
     return parser.parse_args()
 

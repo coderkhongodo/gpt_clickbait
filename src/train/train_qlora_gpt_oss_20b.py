@@ -26,8 +26,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Train GPT-OSS 20B with QLoRA (SFT)")
     # Paths
     parser.add_argument("--model_id", type=str, default=os.environ.get("MODEL_ID", "openai/gpt-oss-20b"))
-    parser.add_argument("--data_dir", type=str, default=os.environ.get("DATA_DIR", os.path.join("jsonl_text")))
-    parser.add_argument("--output_dir", type=str, default=os.environ.get("OUTPUT_DIR", "gpt-oss-20b-qlora-finetune"))
+    parser.add_argument("--data_dir", type=str, default=os.environ.get("DATA_DIR", os.path.join("data_processed", "jsonl_text_clickbait")))
+    parser.add_argument("--output_dir", type=str, default=os.environ.get("OUTPUT_DIR", "models/gpt-oss-20b-qlora-clickbait"))
     parser.add_argument("--train_file", type=str, default=os.environ.get("TRAIN_FILE", "train_instruction.jsonl"))
     parser.add_argument("--val_file", type=str, default=os.environ.get("VAL_FILE", "val_instruction.jsonl"))
     # Training hyperparameters
@@ -54,20 +54,20 @@ def parse_args():
     parser.add_argument("--lora_r", type=int, default=int(os.environ.get("LORA_R", 32)))
     parser.add_argument("--lora_alpha", type=int, default=int(os.environ.get("LORA_ALPHA", 64)))
     parser.add_argument("--lora_dropout", type=float, default=float(os.environ.get("LORA_DROPOUT", 0.1)))
-    # Class weights for 3-class sentiment (map '0','1','2')
+    # Class weights for binary classification (map '0','1')
     parser.add_argument(
         "--class_weights",
         type=str,
-        default=os.environ.get("CLASS_WEIGHTS", "1.0,5.0,1.0"),
-        help="Comma-separated weights for labels 0,1,2 (e.g., '1.0,5.0,1.0')",
+        default=os.environ.get("CLASS_WEIGHTS", "1.0,1.0"),
+        help="Comma-separated weights for labels 0,1 (e.g., '1.0,1.0')",
     )
     # Weighted sampling (increase neutral frequency in training only)
     parser.add_argument("--weighted_sampler", action="store_true", help="Use WeightedRandomSampler for training")
     parser.add_argument(
         "--target_sampling_ratio",
         type=str,
-        default=os.environ.get("TARGET_SAMPLING_RATIO", "0.40,0.20,0.40"),
-        help="Target sampling ratio for labels 0,1,2 (e.g., '0.40,0.20,0.40')",
+        default=os.environ.get("TARGET_SAMPLING_RATIO", "0.50,0.50"),
+        help="Target sampling ratio for labels 0,1 (e.g., '0.50,0.50')",
     )
     args = parser.parse_args()
     # Defaults for bf16/packing if not explicitly disabled
@@ -486,15 +486,15 @@ def main():
                     control.should_training_stop = True
                     tqdm.write("early stopping triggered")
 
-    # Parse class weights mapping for '0','1','2'
+    # Parse class weights mapping for '0','1' (binary classification)
     cw_vals = [v.strip() for v in args.class_weights.split(',')]
-    if len(cw_vals) >= 3:
+    if len(cw_vals) >= 2:
         try:
-            cw_map = {"0": float(cw_vals[0]), "1": float(cw_vals[1]), "2": float(cw_vals[2])}
+            cw_map = {"0": float(cw_vals[0]), "1": float(cw_vals[1])}
         except Exception:
-            cw_map = {"0": 1.0, "1": 1.0, "2": 1.0}
+            cw_map = {"0": 1.0, "1": 1.0}
     else:
-        cw_map = {"0": 1.0, "1": 1.0, "2": 1.0}
+        cw_map = {"0": 1.0, "1": 1.0}
 
     trainer = WeightedSFTTrainer(
         model=model,

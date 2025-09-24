@@ -1,14 +1,14 @@
-# GPT-OSS 20B + QLoRA – UIT-VSFC (Topic 4 lớp, Sentiment 2 lớp)
+# GPT-OSS 20B + QLoRA – Vietnamese Clickbait Detection
 
-End-to-end pipeline tinh chỉnh `openai/gpt-oss-20b` trên UIT-VSFC cho:
-- Phân loại Topic (4 lớp: 0/1/2/3)
-- Phân loại Sentiment 2 lớp (0=negative, 1=positive)
+End-to-end pipeline tinh chỉnh `openai/gpt-oss-20b` cho phân loại clickbait tiếng Việt:
+- Phân loại Clickbait (2 lớp: 0=không phải clickbait, 1=clickbait)
+- Sử dụng dataset clickbait tiếng Việt với 3,414 mẫu
+- Kết hợp tiêu đề và nội dung bài báo để phân loại
 
-Chi tiết báo cáo:
-- Topic: `docs/topic_classification_report.md`
-- Sentiment 2 lớp: `docs/sentiment_classification_report.md`
-
-Trong báo cáo Topic đã bổ sung baseline PhoBERT và so sánh trực tiếp với GPT-OSS 20B trên test (accuracy, F1 macro/weighted, bảng per-class).
+Dataset bao gồm:
+- 2,349 mẫu không phải clickbait (68.8%)
+- 1,065 mẫu clickbait (31.2%)
+- Nguồn: Các trang báo tiếng Việt (VnExpress, Tuổi Trẻ, SaoStar, v.v.)
 
 ## 🚀 Quick Start
 
@@ -37,15 +37,14 @@ Lưu ý:
 - CUDA hệ thống 12.8 tương thích với build cu121 của PyTorch.
 - bitsandbytes>=0.43.0 hỗ trợ CUDA 12.x; trên Windows cần bản Python 3.10+.
 
-### 2) Chuẩn bị dữ liệu (UIT-VSFC)
+### 2) Chuẩn bị dữ liệu (Clickbait Dataset)
 
 Đặt dữ liệu gốc ở:
 
 ```
-data/uit-vsfc/
-  train/{sents.txt, sentiments.txt, topics.txt}
-  dev/{sents.txt, sentiments.txt, topics.txt}
-  test/{sents.txt, sentiments.txt, topics.txt}
+data/data_raw/
+  clickbait_dataset_vietnamese.csv
+  clickbait_dataset_vietnamese.jsonl
 ```
 
 Sinh instruction 3 lớp (kèm “Đáp án:”):

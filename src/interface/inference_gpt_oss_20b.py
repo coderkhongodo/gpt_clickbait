@@ -12,9 +12,9 @@ from tqdm import tqdm
 
 
 MODEL_ID = os.environ.get("MODEL_ID", "openai/gpt-oss-20b")
-ADAPTER_DIR = os.environ.get("ADAPTER_DIR", "gpt-oss-20b-qlora-finetune")
-DATA_DIR = os.environ.get("DATA_DIR", os.path.join("jsonl_text"))
-TEST_FILE = os.environ.get("TEST_FILE", os.path.join(DATA_DIR, "test.jsonl"))
+ADAPTER_DIR = os.environ.get("ADAPTER_DIR", "models/gpt-oss-20b-qlora-clickbait/best")
+DATA_DIR = os.environ.get("DATA_DIR", os.path.join("data_processed", "jsonl_text_clickbait"))
+TEST_FILE = os.environ.get("TEST_FILE", os.path.join(DATA_DIR, "test_instruction.jsonl"))
 
 
 def load_jsonl_as_list(path: str) -> List[dict]:
@@ -92,9 +92,10 @@ def main():
     print()
     
     for ex in tqdm(test_records[:to_show], desc="inference", leave=True):
-        prompt = ex.get("prompt", "")
-        # Nắn prompt để mô hình trả lời duy nhất 0 hoặc 1
-        prompt = f"{prompt.strip()} Trả lời chỉ 0 hoặc 1:"
+        # Use instruction format: instruction + input
+        instruction = ex.get("instruction", "")
+        input_text = ex.get("input", "")
+        prompt = f"{instruction}\n{input_text}"
         # Don't add EOS to input prompt - let model generate it
         inputs = tokenizer([prompt], return_tensors="pt")
         inputs = {k: v.to(model.device) for k, v in inputs.items()}
